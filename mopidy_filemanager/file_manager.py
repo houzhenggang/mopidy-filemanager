@@ -57,7 +57,11 @@ class FileManager:
                 continue
 
             fpath = os.path.join(path, fname)
-            ftype, fsize, ftime, fmode = get_file_information(fpath)
+
+            try:
+                ftype, fsize, ftime, fmode = get_file_information(fpath)
+            except Exception as e:
+                continue
 
             files.append({
                 'name': fname,
