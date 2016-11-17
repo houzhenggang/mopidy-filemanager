@@ -1,9 +1,10 @@
-import os
-import stat
 import datetime
 import json
+import os
 import shutil
+import stat
 import zipfile
+
 import tornado.web
 
 
@@ -38,13 +39,13 @@ def change_permissions_recursive(path, mode):
         for d in [os.path.join(root, d) for d in dirs]:
             os.chmod(d, mode)
         for f in [os.path.join(root, f) for f in files]:
-                os.chmod(f, mode)
+            os.chmod(f, mode)
 
 
 class FileManager:
-    def __init__(self, root='/'):
+    def __init__(self, root='/', show_dotfiles=True):
         self.root = os.path.abspath(root)
-        self.show_hidden = False
+        self.show_dotfiles = show_dotfiles
 
     def list(self, request):
         path = os.path.abspath(self.root + request['path'])
@@ -53,7 +54,7 @@ class FileManager:
 
         files = []
         for fname in sorted(os.listdir(path)):
-            if fname.startswith('.') and not self.show_hidden:
+            if fname.startswith('.') and not self.show_dotfiles:
                 continue
 
             fpath = os.path.join(path, fname)
@@ -176,7 +177,7 @@ class FileManager:
                 path = os.path.abspath(self.root + item)
                 if not (os.path.exists(path) and path.startswith(self.root)):
                     return {'result': {'success': 'false', 'error': 'Invalid path'}}
-                
+
                 if recursive == 'true':
                     change_permissions_recursive(path, permissions)
                 else:
@@ -230,14 +231,17 @@ class FileManager:
 
         return {'result': {'success': 'true', 'error': ''}}
 
-    def upload(self, request):
+    def upload(self, handler):
         try:
-            for name in self.request.files:
-                fileinfo = self.request.files[name][0]
+            destination = handler.get_body_argument('destination', default='/')
+            for name in handler.request.files:
+                fileinfo = handler.request.files[name][0]
                 filename = fileinfo['filename']
-                f = open(os.path.join(self.root, filename), 'w')
-                f.write(fileinfo['body'])
-                f.close()
+                path = os.path.abspath(os.path.join(self.root, destination, filename))
+                if not path.startswith(self.root):
+                    return {'result': {'success': 'false', 'error': 'Invalid path'}}
+                with open(path, 'wb') as f:
+                    f.write(fileinfo['body'])
         except Exception as e:
             return {'result': {'success': 'false', 'error': e.message}}
 
@@ -258,8 +262,8 @@ class FileManager:
 
 
 class FileManagerHandler(tornado.web.RequestHandler):
-    def initialize(self, root='/'):
-        self.filemanager = FileManager(root)
+    def initialize(self, root='/', show_dotfiles=True):
+        self.filemanager = FileManager(root, show_dotfiles)
 
     def get(self):
         action = self.get_query_argument('action', '')
@@ -270,7 +274,7 @@ class FileManagerHandler(tornado.web.RequestHandler):
 
     def post(self):
         if self.request.headers.get('Content-Type').find('multipart/form-data') >= 0:
-            result = self.filemanager.upload(self.request)
+            result = self.filemanager.upload(self)
             self.write(json.dumps(result))
         else:
             try:
@@ -291,7 +295,10 @@ def main():
 
     handlers = [
         (r'/fs', FileManagerHandler),
-        (r'/(.*)', tornado.web.StaticFileHandler, {'path': os.getcwd()}),
+        (r'/(.*)', tornado.web.StaticFileHandler, {
+            'path': os.path.join(os.path.dirname(__file__), 'static'),
+            'default_filename': 'index.html'
+        }),
     ]
 
     app = tornado.web.Application(handlers, debug=True)
